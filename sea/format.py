@@ -1,7 +1,9 @@
 # -*- coding:utf-8 -*-
 import json
+import pendulum
 from google.protobuf.descriptor import FieldDescriptor
 from google.protobuf.json_format import ParseDict
+from google.protobuf.timestamp_pb2 import Timestamp
 EXTENSION_CONTAINER = '___X'
 
 TYPE_CALLABLE_MAP = {
@@ -21,6 +23,15 @@ TYPE_CALLABLE_MAP = {
     FieldDescriptor.TYPE_STRING: str,
     FieldDescriptor.TYPE_BYTES: bytes,
     FieldDescriptor.TYPE_ENUM: int,
+}
+
+MSG_CONVERTERS = {
+    'google.protobuf.Timestamp': lambda ts: ts.ToDatetime(),
+}
+
+DICT_CONVERTERS = {
+    'created_at': lambda t: pendulum.parse(t).for_json(),
+    'updated_at': lambda t: pendulum.parse(t).for_json(),
 }
 
 
@@ -46,6 +57,12 @@ def _is_repeat_message(field):
 def msg2dict(pb, keys=None, use_enum_labels=False,
              including_default_value_fields=False):
 
+    # if converter exists, convert it by converter
+    # instead of convert it recursion
+    converter = MSG_CONVERTERS.get(pb.DESCRIPTOR.full_name)
+    if converter:
+        return converter(pb)
+
     if keys:
         field_values = [(pb.DESCRIPTOR.fields_by_name[key],
                          getattr(pb, key)) for key in keys]
@@ -68,7 +85,24 @@ def msg2json(msg, keys=None, indent=2, sort_keys=False):
     return json.dumps(d, indent=indent, sort_keys=sort_keys)
 
 
+def preprocess_dict(d):
+    """
+    This method will change `d` itself and return it.
+    For `dict2msg` method.
+    :type d: dict
+    """
+    for k, v in d.items():
+        if isinstance(v, dict):
+            d[k] = preprocess_dict(v)
+            continue
+        converter = DICT_CONVERTERS.get(k)
+        if converter:
+            d[k] = converter(v)
+    return d
+
+
 def dict2msg(d, message, ignore_unknown_fields=False):
+    d = preprocess_dict(d)
     return ParseDict(d, message, ignore_unknown_fields=ignore_unknown_fields)
 
 
